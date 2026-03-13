@@ -1,29 +1,1039 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GB Monster RPG</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GB Style Monster RPG Starter</title>
+  <style>
+    :root {
+      --bg0: #0f380f;
+      --bg1: #306230;
+      --bg2: #8bac0f;
+      --bg3: #9bbc0f;
+      --ui: #e0f8d0;
+      --border: #081820;
+    }
 
-<link rel="stylesheet" href="css/style.css">
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: white;
+      font-family: monospace;
+    }
+
+    .wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+
+    .hud {
+      color: #ddd;
+      font-size: 13px;
+      text-align: center;
+      line-height: 1.5;
+      max-width: 760px;
+    }
+
+    canvas {
+      width: min(960px, 96vw);
+      height: auto;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background: var(--bg3);
+      border: 4px solid #444;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+  </style>
 </head>
-
 <body>
-
-<div class="wrap">
-  <canvas id="game" width="160" height="144"></canvas>
-
-  <div class="hud">
-    I J K L move · Z interact · X cancel · C roster · Enter pause
+  <div class="wrap">
+    <canvas id="game" width="160" height="144" aria-label="Game canvas"></canvas>
+    <div class="hud">
+      I J K L move · Z interact / confirm · X cancel · C roster · Enter pause<br>
+      Added a 151-slot original creature roster, easier-to-read text, slower movement, and procedural in-game pixel sprites.
+    </div>
   </div>
-</div>
 
-<script src="js/constants.js"></script>
-<script src="js/input.js"></script>
-<script src="js/data_creatures.js"></script>
-<script src="js/maps.js"></script>
-<script src="js/render.js"></script>
-<script src="js/main.js"></script>
+  <script>
+    "use strict";
 
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+
+    const SCREEN_W = 160;
+    const SCREEN_H = 144;
+    const TILE = 8;
+    const MAP_W = 32;
+    const MAP_H = 32;
+    const PLAYER_W = 8;
+    const PLAYER_H = 8;
+
+    const COLORS = {
+      c0: "#0f380f",
+      c1: "#306230",
+      c2: "#8bac0f",
+      c3: "#9bbc0f",
+      ui: "#e0f8d0",
+      border: "#081820"
+    };
+
+    function drawText(text, x, y) {
+      ctx.strokeStyle = COLORS.ui;
+      ctx.strokeText(text, x, y);
+      ctx.fillStyle = COLORS.border;
+      ctx.fillText(text, x, y);
+    }
+
+    const Tile = {
+      GRASS: 0,
+      PATH: 1,
+      TREE: 2,
+      WATER: 3,
+      FLOWER: 4,
+      ROOF: 5,
+      WALL: 6,
+      DOOR: 7,
+      SIGN: 8,
+      TALL_GRASS: 9,
+      FLOOR: 10,
+      TABLE: 11
+    };
+
+    const keys = Object.create(null);
+    const justPressed = Object.create(null);
+
+    const NAME_PARTS = {
+      seed: ["Spri", "Verd", "Moss", "Bram", "Thorn", "Leaf", "Bud", "Petal"],
+      lizard: ["Cin", "Ember", "Flare", "Scorch", "Ash", "Pyro", "Blaze", "Coal"],
+      turtle: ["Rill", "Brook", "Wave", "Coral", "Shell", "Tide", "Foam", "Reef"],
+      bug: ["Silk", "Buzz", "Sting", "Moth", "Web", "Pupa", "Grub", "Hex"],
+      bird: ["Gale", "Wing", "Chirp", "Talon", "Feath", "Skye", "Aero", "Rook"],
+      rodent: ["Nib", "Gnaw", "Volt", "Squeak", "Zap", "Whisk", "Bolt", "Pika"],
+      snake: ["Vine", "Hiss", "Fang", "Coil", "Asp", "Slith", "Naja", "Adder"],
+      fairy: ["Lumi", "Twink", "Puff", "Mimi", "Charm", "Drea", "Star", "Moon"],
+      fox: ["Vulp", "Cinder", "Fenn", "Glint", "Mist", "Shine", "Snow", "Aura"],
+      mole: ["Peb", "Bur", "Drill", "Dust", "Muck", "Trem", "Tunnel", "Clod"],
+      fungus: ["Spore", "Myco", "Cap", "Moss", "Bloom", "Fume", "Toad", "Morel"],
+      plant: ["Bloom", "Stem", "Rose", "Briar", "Fern", "Bud", "Vine", "Lily"],
+      fish: ["Fin", "Aqua", "Scale", "Tide", "Gill", "Mar", "Splash", "Koi"],
+      rock: ["Geo", "Crag", "Gran", "Stone", "Rubble", "Shard", "Flint", "Bould"],
+      ghost: ["Gloom", "Wisp", "Shade", "Haunt", "Murk", "Noct", "Phan", "Dread"],
+      magnet: ["Mag", "Flux", "Tesla", "Polar", "Volt", "Coil", "Spark", "Steel"],
+      humanoid: ["Psi", "Medi", "Kar", "Fist", "Mind", "Zen", "Aura", "Vigi"],
+      crab: ["Krab", "Clamp", "Shell", "Coral", "Claw", "Brine", "Tide", "Reef"],
+      horse: ["Pony", "Gall", "Flare", "Blaze", "Mane", "Rapid", "Ash", "Bridle"],
+      blob: ["Goo", "Slud", "Mire", "Glob", "Ooze", "Muck", "Drip", "Grime"],
+      default: ["Nova", "Myth", "Rune", "Echo", "Dusk", "Frost", "Storm", "Drift"]
+    };
+
+    const NAME_ENDINGS = ["let", "horn", "mite", "claw", "fin", "puff", "hound", "ling", "drake", "toad", "bat", "mole", "cub", "owl", "ray", "bug", "on", "ra", "ix", "or"];
+
+    const FAMILY_BLUEPRINTS = [
+      { familyId: "F001", slots: [1,2,3], archetype: "seed", baseType: "Leaf", stages: ["sprout","grown","beast"] },
+      { familyId: "F002", slots: [4,5,6], archetype: "lizard", baseType: "Flame", stages: ["sprout","grown","beast"] },
+      { familyId: "F003", slots: [7,8,9], archetype: "turtle", baseType: "Wave", stages: ["sprout","grown","beast"] },
+      { familyId: "F004", slots: [10,11,12], archetype: "bug", baseType: "Leaf", stages: ["larva","cocoon","winged"] },
+      { familyId: "F005", slots: [13,14,15], archetype: "bug", baseType: "Shade", stages: ["larva","cocoon","stinger"] },
+      { familyId: "F006", slots: [16,17,18], archetype: "bird", baseType: "Mist", stages: ["small","grown","large"] },
+      { familyId: "F007", slots: [19,20], archetype: "rodent", baseType: "Spark", stages: ["small","grown"] },
+      { familyId: "F008", slots: [21,22], archetype: "bird", baseType: "Shade", stages: ["small","grown"] },
+      { familyId: "F009", slots: [23,24], archetype: "snake", baseType: "Shade", stages: ["small","grown"] },
+      { familyId: "F010", slots: [25,26], archetype: "rodent", baseType: "Spark", stages: ["small","grown"] },
+      { familyId: "F011", slots: [27,28], archetype: "mole", baseType: "Stone", stages: ["small","grown"] },
+      { familyId: "F012", slots: [29,30,31], archetype: "fairy", baseType: "Bloom", stages: ["small","grown","queen"] },
+      { familyId: "F013", slots: [32,33,34], archetype: "horn", baseType: "Stone", stages: ["small","grown","king"] },
+      { familyId: "F014", slots: [35,36], archetype: "fairy", baseType: "Mist", stages: ["small","grown"] },
+      { familyId: "F015", slots: [37,38], archetype: "fox", baseType: "Flame", stages: ["small","grown"] },
+      { familyId: "F016", slots: [39,40], archetype: "fairy", baseType: "Mist", stages: ["small","grown"] },
+      { familyId: "F017", slots: [41,42], archetype: "bat", baseType: "Shade", stages: ["small","grown"] },
+      { familyId: "F018", slots: [43,44,45], archetype: "plant", baseType: "Leaf", stages: ["sprout","grown","bloom"] },
+      { familyId: "F019", slots: [46,47], archetype: "fungus", baseType: "Bloom", stages: ["small","grown"] },
+      { familyId: "F020", slots: [48,49], archetype: "bug", baseType: "Mist", stages: ["small","grown"] },
+      { familyId: "F021", slots: [50,51], archetype: "mole", baseType: "Stone", stages: ["small","grown"] },
+      { familyId: "F022", slots: [52,53], archetype: "cat", baseType: "Mist", stages: ["small","grown"] },
+      { familyId: "F023", slots: [54,55], archetype: "duck", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F024", slots: [56,57], archetype: "ape", baseType: "Flame", stages: ["small","grown"] },
+      { familyId: "F025", slots: [58,59], archetype: "hound", baseType: "Flame", stages: ["small","grown"] },
+      { familyId: "F026", slots: [60,61,62], archetype: "toad", baseType: "Wave", stages: ["small","grown","champion"] },
+      { familyId: "F027", slots: [63,64,65], archetype: "humanoid", baseType: "Shade", stages: ["small","grown","sage"] },
+      { familyId: "F028", slots: [66,67,68], archetype: "humanoid", baseType: "Stone", stages: ["small","grown","champion"] },
+      { familyId: "F029", slots: [69,70,71], archetype: "plant", baseType: "Bloom", stages: ["small","grown","bloom"] },
+      { familyId: "F030", slots: [72,73], archetype: "jelly", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F031", slots: [74,75,76], archetype: "rock", baseType: "Stone", stages: ["small","grown","boulder"] },
+      { familyId: "F032", slots: [77,78], archetype: "horse", baseType: "Flame", stages: ["small","grown"] },
+      { familyId: "F033", slots: [79,80], archetype: "shell", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F034", slots: [81,82], archetype: "magnet", baseType: "Spark", stages: ["small","grown"] },
+      { familyId: "F035", slots: [83], archetype: "bird", baseType: "Leaf", stages: ["solo"] },
+      { familyId: "F036", slots: [84,85], archetype: "bird", baseType: "Mist", stages: ["small","grown"] },
+      { familyId: "F037", slots: [86,87], archetype: "seal", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F038", slots: [88,89], archetype: "blob", baseType: "Shade", stages: ["small","grown"] },
+      { familyId: "F039", slots: [90,91], archetype: "shell", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F040", slots: [92,93,94], archetype: "ghost", baseType: "Shade", stages: ["small","grown","haunt"] },
+      { familyId: "F041", slots: [95], archetype: "snake", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F042", slots: [96,97], archetype: "humanoid", baseType: "Mist", stages: ["small","grown"] },
+      { familyId: "F043", slots: [98,99], archetype: "crab", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F044", slots: [100,101], archetype: "orb", baseType: "Spark", stages: ["small","grown"] },
+      { familyId: "F045", slots: [102,103], archetype: "seed", baseType: "Leaf", stages: ["small","grown"] },
+      { familyId: "F046", slots: [104,105], archetype: "bone", baseType: "Stone", stages: ["small","grown"] },
+      { familyId: "F047", slots: [106], archetype: "humanoid", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F048", slots: [107], archetype: "humanoid", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F049", slots: [108], archetype: "blob", baseType: "Mist", stages: ["solo"] },
+      { familyId: "F050", slots: [109,110], archetype: "orb", baseType: "Shade", stages: ["small","grown"] },
+      { familyId: "F051", slots: [111,112], archetype: "horn", baseType: "Stone", stages: ["small","grown"] },
+      { familyId: "F052", slots: [113], archetype: "fairy", baseType: "Bloom", stages: ["solo"] },
+      { familyId: "F053", slots: [114], archetype: "plant", baseType: "Leaf", stages: ["solo"] },
+      { familyId: "F054", slots: [115], archetype: "pouch", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F055", slots: [116,117], archetype: "fish", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F056", slots: [118,119], archetype: "fish", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F057", slots: [120,121], archetype: "star", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F058", slots: [122], archetype: "humanoid", baseType: "Mist", stages: ["solo"] },
+      { familyId: "F059", slots: [123], archetype: "bug", baseType: "Leaf", stages: ["solo"] },
+      { familyId: "F060", slots: [124], archetype: "humanoid", baseType: "Mist", stages: ["solo"] },
+      { familyId: "F061", slots: [125], archetype: "humanoid", baseType: "Spark", stages: ["solo"] },
+      { familyId: "F062", slots: [126], archetype: "humanoid", baseType: "Flame", stages: ["solo"] },
+      { familyId: "F063", slots: [127], archetype: "bug", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F064", slots: [128], archetype: "beast", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F065", slots: [129,130], archetype: "fish", baseType: "Wave", stages: ["small","serpent"] },
+      { familyId: "F066", slots: [131], archetype: "shell", baseType: "Wave", stages: ["solo"] },
+      { familyId: "F067", slots: [132], archetype: "blob", baseType: "Mist", stages: ["solo"] },
+      { familyId: "F068", slots: [133,134,135,136], archetype: "fox", baseType: "Mist", stages: ["base","wave","spark","flame"] },
+      { familyId: "F069", slots: [137], archetype: "magnet", baseType: "Mist", stages: ["solo"] },
+      { familyId: "F070", slots: [138,139], archetype: "shell", baseType: "Wave", stages: ["small","grown"] },
+      { familyId: "F071", slots: [140,141], archetype: "crab", baseType: "Stone", stages: ["small","grown"] },
+      { familyId: "F072", slots: [142], archetype: "bird", baseType: "Stone", stages: ["solo"] },
+      { familyId: "F073", slots: [143], archetype: "beast", baseType: "Mist", stages: ["solo"] },
+      { familyId: "F074", slots: [144], archetype: "bird", baseType: "Wave", stages: ["legend"] },
+      { familyId: "F075", slots: [145], archetype: "bird", baseType: "Spark", stages: ["legend"] },
+      { familyId: "F076", slots: [146], archetype: "bird", baseType: "Flame", stages: ["legend"] },
+      { familyId: "F077", slots: [147,148,149], archetype: "drake", baseType: "Wave", stages: ["small","grown","mythic"] },
+      { familyId: "F078", slots: [150], archetype: "humanoid", baseType: "Shade", stages: ["mythic"] },
+      { familyId: "F079", slots: [151], archetype: "sprite", baseType: "Bloom", stages: ["mythic"] }
+    ];
+
+    const ARCHETYPE_HINTS = {
+      horn: "hornbeast", bat: "bat", cat: "cat", duck: "duck", ape: "ape", jelly: "jelly", shell: "shell", orb: "orb", bone: "bonebeast", seal: "seal", pouch: "pouchbeast", star: "star", beast: "beast"
+    };
+
+    function clamp(n, min, max) {
+      return Math.max(min, Math.min(max, n));
+    }
+
+    const SLOT_BLUEPRINTS = [];
+    for (const family of FAMILY_BLUEPRINTS) {
+      family.slots.forEach((slot, idx) => {
+        const stage = family.stages[idx] || family.stages[family.stages.length - 1] || "solo";
+        SLOT_BLUEPRINTS[slot] = {
+          slot,
+          familyId: family.familyId,
+          archetype: ARCHETYPE_HINTS[family.archetype] || family.archetype,
+          baseType: family.baseType,
+          stage,
+          stageIndex: idx,
+          evolutionStageCount: family.slots.length,
+          evolvesTo: family.slots[idx + 1] || null,
+          evolvesFrom: family.slots[idx - 1] || null,
+          familySlots: family.slots.slice()
+        };
+      });
+    }
+
+    function stageBst(blueprint) {
+      if (blueprint.evolutionStageCount === 1) {
+        return blueprint.stage === "legend" || blueprint.stage === "mythic" ? 580 : 430;
+      }
+      if (blueprint.evolutionStageCount === 2) {
+        return blueprint.stageIndex === 0 ? 300 : 445;
+      }
+      return [305, 405, 505][blueprint.stageIndex] || 430;
+    }
+
+    function creatureName(blueprint, seed) {
+      const rng = mulberry32(seed ^ 0xA5A5A5A5);
+      const pool = NAME_PARTS[blueprint.archetype] || NAME_PARTS.default;
+      const start = pool[Math.floor(rng() * pool.length)];
+      const end = NAME_ENDINGS[(blueprint.slot + Math.floor(rng() * 7)) % NAME_ENDINGS.length];
+      let name = `${start}${end}`;
+      if (blueprint.stageIndex === 1) name += "a";
+      if (blueprint.stageIndex === 2) name += "or";
+      return name.slice(0, 10);
+    }
+
+    function makeCreature(index) {
+      const blueprint = SLOT_BLUEPRINTS[index];
+      const seed = 9001 + index * 97;
+      const rng = mulberry32(seed);
+      const bstBase = stageBst(blueprint);
+      let hp = 28 + Math.floor(rng() * 35) + blueprint.stageIndex * 10;
+      let atk = 24 + Math.floor(rng() * 38) + (blueprint.archetype.includes("bird") || blueprint.archetype === "drake" ? 8 : 0);
+      let def = 22 + Math.floor(rng() * 38) + (["turtle","rock","shell","hornbeast"].includes(blueprint.archetype) ? 10 : 0);
+      let spd = 22 + Math.floor(rng() * 40) + (["bird","bat","cat","rodent"].includes(blueprint.archetype) ? 8 : 0);
+      let spc = 22 + Math.floor(rng() * 40) + (["ghost","sprite","fairy","magnet","humanoid"].includes(blueprint.archetype) ? 10 : 0);
+      let total = hp + atk + def + spd + spc;
+      const scale = bstBase / total;
+      hp = clamp(Math.round(hp * scale), 20, 180);
+      atk = clamp(Math.round(atk * scale), 18, 170);
+      def = clamp(Math.round(def * scale), 18, 170);
+      spd = clamp(Math.round(spd * scale), 18, 170);
+      spc = clamp(Math.round(spc * scale), 18, 170);
+      const bst = hp + atk + def + spd + spc;
+      return {
+        index,
+        id: `mon_${String(index).padStart(3, "0")}`,
+        name: creatureName(blueprint, seed),
+        type: blueprint.baseType,
+        archetype: blueprint.archetype,
+        stage: blueprint.stage,
+        stageIndex: blueprint.stageIndex,
+        familyId: blueprint.familyId,
+        familySlots: blueprint.familySlots,
+        evolvesTo: blueprint.evolvesTo ? `mon_${String(blueprint.evolvesTo).padStart(3, "0")}` : null,
+        evolvesFrom: blueprint.evolvesFrom ? `mon_${String(blueprint.evolvesFrom).padStart(3, "0")}` : null,
+        stats: { hp, atk, def, spd, spc, bst },
+        spriteSeed: seed
+      };
+    }
+
+    const CREATURES = Array.from({ length: 151 }, (_, i) => makeCreature(i + 1));
+    const CREATURE_BY_ID = Object.fromEntries(CREATURES.map(c => [c.id, c]));
+
+    function drawCreatureSprite(creature, x, y, size = 16) {
+      const rng = mulberry32(creature.spriteSeed ^ 0x5F3759DF);
+      const unit = Math.max(1, Math.floor(size / 16));
+      const stageBoost = creature.stageIndex * unit;
+      const bodyW = 6 * unit + Math.floor(rng() * 2) * unit + stageBoost;
+      const bodyH = 5 * unit + Math.floor(rng() * 2) * unit + stageBoost;
+      const ox = x + Math.floor((size - bodyW) / 2);
+      const oy = y + size - bodyH - 3 * unit;
+      const arch = creature.archetype;
+
+      ctx.fillStyle = COLORS.c0;
+
+      if (["bird", "bat", "drake"].includes(arch)) {
+        ctx.fillRect(ox - 2 * unit, oy + 2 * unit, 2 * unit, 4 * unit);
+        ctx.fillRect(ox + bodyW, oy + 2 * unit, 2 * unit, 4 * unit);
+      }
+      if (["seed", "plant", "sprite"].includes(arch)) {
+        ctx.fillRect(ox + bodyW / 2 - unit, oy - 2 * unit, 2 * unit, 2 * unit);
+        ctx.fillRect(ox + bodyW / 2 - 3 * unit, oy - unit, 2 * unit, unit);
+        ctx.fillRect(ox + bodyW / 2 + unit, oy - unit, 2 * unit, unit);
+      }
+      if (["hornbeast", "drake", "hound", "beast"].includes(arch)) {
+        ctx.fillRect(ox + unit, oy - unit, unit, unit);
+        ctx.fillRect(ox + bodyW - 2 * unit, oy - unit, unit, unit);
+      }
+      if (["shell", "turtle", "rock"].includes(arch)) {
+        ctx.fillRect(ox, oy + unit, bodyW, bodyH - unit);
+        ctx.fillRect(ox + unit, oy + 2 * unit, Math.max(unit, bodyW - 2 * unit), Math.max(unit, bodyH - 3 * unit));
+      } else if (["blob", "jelly", "ghost", "orb"].includes(arch)) {
+        ctx.fillRect(ox + unit, oy, bodyW - 2 * unit, bodyH);
+        ctx.fillRect(ox, oy + unit, bodyW, bodyH - 2 * unit);
+      } else if (["snake", "fish", "star"].includes(arch)) {
+        ctx.fillRect(ox + unit, oy + unit, bodyW - unit, bodyH - unit);
+        ctx.fillRect(ox, oy + bodyH / 2, unit, 2 * unit);
+      } else {
+        ctx.fillRect(ox, oy, bodyW, bodyH);
+      }
+
+      if (["fish", "seal", "star"].includes(arch)) {
+        ctx.fillRect(ox + bodyW, oy + 2 * unit, 2 * unit, 2 * unit);
+        ctx.fillRect(ox + bodyW + unit, oy + unit, unit, 4 * unit);
+      }
+      if (["crab", "bug"].includes(arch)) {
+        ctx.fillRect(ox - unit, oy + bodyH - 3 * unit, unit, 3 * unit);
+        ctx.fillRect(ox + bodyW, oy + bodyH - 3 * unit, unit, 3 * unit);
+      }
+      if (["humanoid", "ape", "cat", "duck", "rodent", "fox", "pouchbeast"].includes(arch)) {
+        ctx.fillRect(ox + unit, oy + bodyH, unit, 2 * unit);
+        ctx.fillRect(ox + bodyW - 2 * unit, oy + bodyH, unit, 2 * unit);
+        ctx.fillRect(ox - unit, oy + 2 * unit, unit, 2 * unit);
+        ctx.fillRect(ox + bodyW, oy + 2 * unit, unit, 2 * unit);
+      }
+
+      ctx.fillStyle = COLORS.c3;
+      const eyeY = oy + 2 * unit;
+      ctx.fillRect(ox + 2 * unit, eyeY, unit, unit);
+      ctx.fillRect(ox + bodyW - 3 * unit, eyeY, unit, unit);
+      if (creature.stageIndex >= 1) {
+        ctx.fillRect(ox + bodyW / 2 - unit / 2, oy + bodyH / 2, unit, unit);
+      }
+      if (creature.stageIndex >= 2 || creature.stage === "legend" || creature.stage === "mythic") {
+        ctx.fillStyle = COLORS.c1;
+        ctx.fillRect(ox + bodyW / 2 - unit, oy - unit, 2 * unit, unit);
+        ctx.fillRect(ox + bodyW / 2 - 2 * unit, oy, unit, unit);
+        ctx.fillRect(ox + bodyW / 2 + unit, oy, unit, unit);
+      }
+    }
+
+    function drawTile(tileId, x, y) {
+      switch (tileId) {
+        case Tile.GRASS:
+          ctx.fillStyle = COLORS.c3;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x + 1, y + 1, 1, 1);
+          ctx.fillRect(x + 5, y + 2, 1, 1);
+          ctx.fillRect(x + 3, y + 6, 1, 1);
+          break;
+        case Tile.PATH:
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c3;
+          ctx.fillRect(x + 1, y + 1, 1, 1);
+          ctx.fillRect(x + 6, y + 4, 1, 1);
+          break;
+        case Tile.TREE:
+          ctx.fillStyle = COLORS.c1;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c0;
+          ctx.fillRect(x + 1, y + 1, 6, 5);
+          ctx.fillStyle = COLORS.c1;
+          ctx.fillRect(x + 3, y + 6, 2, 2);
+          break;
+        case Tile.WATER:
+          ctx.fillStyle = COLORS.c1;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x, y + 2, TILE, 1);
+          ctx.fillRect(x, y + 5, TILE, 1);
+          break;
+        case Tile.FLOWER:
+          ctx.fillStyle = COLORS.c3;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c1;
+          ctx.fillRect(x + 3, y + 2, 2, 4);
+          ctx.fillStyle = COLORS.c0;
+          ctx.fillRect(x + 2, y + 1, 4, 2);
+          break;
+        case Tile.ROOF:
+          ctx.fillStyle = COLORS.c1;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c0;
+          ctx.fillRect(x, y, TILE, 2);
+          ctx.fillRect(x, y + 4, TILE, 1);
+          break;
+        case Tile.WALL:
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c1;
+          ctx.fillRect(x, y, TILE, 1);
+          ctx.fillRect(x, y + 7, TILE, 1);
+          ctx.fillRect(x, y, 1, TILE);
+          ctx.fillRect(x + 7, y, 1, TILE);
+          break;
+        case Tile.DOOR:
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c0;
+          ctx.fillRect(x + 2, y + 2, 4, 6);
+          break;
+        case Tile.SIGN:
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c0;
+          ctx.fillRect(x + 1, y + 1, 6, 4);
+          ctx.fillRect(x + 3, y + 5, 2, 3);
+          break;
+        case Tile.TALL_GRASS:
+          ctx.fillStyle = COLORS.c3;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c1;
+          for (let i = 0; i < TILE; i += 2) {
+            ctx.fillRect(x + i, y + 4 + (i % 3 === 0 ? 0 : 1), 1, 4);
+          }
+          break;
+        case Tile.FLOOR:
+          ctx.fillStyle = COLORS.c3;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x + 3, y, 1, TILE);
+          ctx.fillRect(x, y + 3, TILE, 1);
+          break;
+        case Tile.TABLE:
+          ctx.fillStyle = COLORS.c2;
+          ctx.fillRect(x, y, TILE, TILE);
+          ctx.fillStyle = COLORS.c0;
+          ctx.fillRect(x + 1, y + 2, 6, 3);
+          ctx.fillRect(x + 2, y + 5, 1, 2);
+          ctx.fillRect(x + 5, y + 5, 1, 2);
+          break;
+        default:
+          ctx.fillStyle = COLORS.c3;
+          ctx.fillRect(x, y, TILE, TILE);
+      }
+    }
+
+    function drawPlayer(px, py, facing, animFrame) {
+      const bob = animFrame ? 1 : 0;
+      ctx.fillStyle = COLORS.c0;
+      ctx.fillRect(px + 2, py + 1, 4, 3);
+      ctx.fillStyle = COLORS.c1;
+      ctx.fillRect(px + 1, py + 4, 6, 3);
+      if (facing === "left") ctx.fillRect(px + 0, py + 4, 1, 2);
+      else if (facing === "right") ctx.fillRect(px + 7, py + 4, 1, 2);
+      ctx.fillStyle = COLORS.c0;
+      ctx.fillRect(px + 2, py + 7, 1, 1 + bob);
+      ctx.fillRect(px + 5, py + 7, 1, 1 + (1 - bob));
+    }
+
+    function drawNPC(npc, camera) {
+      const sx = Math.floor(npc.x - camera.x);
+      const sy = Math.floor(npc.y - camera.y);
+      ctx.fillStyle = COLORS.c0;
+      ctx.fillRect(sx + 2, sy + 1, 4, 3);
+      ctx.fillStyle = COLORS.c1;
+      ctx.fillRect(sx + 1, sy + 4, 6, 3);
+      ctx.fillStyle = COLORS.c0;
+      ctx.fillRect(sx + 2, sy + 7, 1, 1);
+      ctx.fillRect(sx + 5, sy + 7, 1, 1);
+    }
+
+    function makeTownMap() {
+      const bg = make2D(MAP_W, MAP_H, Tile.GRASS);
+      const collision = make2D(MAP_W, MAP_H, 0);
+      const tallGrass = [];
+
+      for (let y = 0; y < MAP_W; y++) {
+        for (let x = 0; x < MAP_H; x++) {
+          if (x === 0 || y === 0 || x === MAP_W - 1 || y === MAP_H - 1) {
+            bg[y][x] = Tile.TREE;
+            collision[y][x] = 1;
+          }
+        }
+      }
+
+      for (let x = 6; x <= 25; x++) bg[18][x] = Tile.PATH;
+      for (let y = 10; y <= 18; y++) bg[y][16] = Tile.PATH;
+      for (let x = 8; x <= 12; x++) bg[10][x] = Tile.PATH;
+      for (let x = 20; x <= 24; x++) bg[10][x] = Tile.PATH;
+      for (let x = 13; x <= 19; x++) bg[8][x] = Tile.PATH;
+
+      for (let y = 22; y <= 26; y++) {
+        for (let x = 21; x <= 27; x++) {
+          bg[y][x] = Tile.TALL_GRASS;
+          tallGrass.push({ x, y });
+        }
+      }
+
+      function placeHouse(tx, ty, w, h) {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            if (y < 2) bg[ty + y][tx + x] = Tile.ROOF;
+            else bg[ty + y][tx + x] = Tile.WALL;
+            collision[ty + y][tx + x] = 1;
+          }
+        }
+        const doorX = tx + Math.floor(w / 2);
+        const doorY = ty + h - 1;
+        bg[doorY][doorX] = Tile.DOOR;
+        collision[doorY][doorX] = 0;
+        return { x: doorX, y: doorY };
+      }
+
+      const homeDoor = placeHouse(7, 6, 5, 4);
+      const labDoor = placeHouse(20, 6, 5, 4);
+
+      bg[15][18] = Tile.SIGN;
+      collision[15][18] = 1;
+      bg[9][14] = Tile.SIGN;
+      collision[9][14] = 1;
+
+      return {
+        id: "starter_town",
+        name: "Starter Town",
+        width: MAP_W,
+        height: MAP_H,
+        bg,
+        collision,
+        tallGrass,
+        warps: [
+          { x: homeDoor.x, y: homeDoor.y, target: "home_1f", targetX: 4, targetY: 6 },
+          { x: labDoor.x, y: labDoor.y, target: "lab_1f", targetX: 4, targetY: 6 }
+        ],
+        signs: [
+          { x: 18, y: 15, text: ["STARTER TOWN", "A SMALL PLACE", "WITH BIG DREAMS."] },
+          { x: 14, y: 9, text: ["FIELD LAB", "151 ORIGINAL", "CREATURE SLOTS READY."] }
+        ],
+        npcs: [
+          {
+            id: "guide",
+            x: 15 * TILE,
+            y: 14 * TILE,
+            dir: "down",
+            text: [
+              "WELCOME!",
+              "THIS BUILD NOW HAS",
+              "A 151-CREATURE",
+              "ORIGINAL ROSTER.",
+              "PRESS C TO VIEW IT."
+            ]
+          }
+        ],
+        encounters: [
+          { id: "mon_001", rate: 45, minLevel: 2, maxLevel: 4 },
+          { id: "mon_004", rate: 30, minLevel: 3, maxLevel: 5 },
+          { id: "mon_007", rate: 15, minLevel: 4, maxLevel: 5 },
+          { id: "mon_012", rate: 10, minLevel: 5, maxLevel: 6 }
+        ]
+      };
+    }
+
+    function makeInterior(id, name) {
+      const w = 10, h = 8;
+      const bg = make2D(w, h, Tile.FLOOR);
+      const collision = make2D(w, h, 0);
+
+      for (let x = 0; x < w; x++) {
+        bg[0][x] = Tile.WALL;
+        bg[h - 1][x] = Tile.WALL;
+        collision[0][x] = 1;
+        collision[h - 1][x] = 1;
+      }
+      for (let y = 0; y < h; y++) {
+        bg[y][0] = Tile.WALL;
+        bg[y][w - 1] = Tile.WALL;
+        collision[y][0] = 1;
+        collision[y][w - 1] = 1;
+      }
+
+      for (let x = 2; x <= 7; x++) {
+        bg[2][x] = Tile.TABLE;
+        collision[2][x] = 1;
+      }
+
+      bg[h - 1][4] = Tile.DOOR;
+      collision[h - 1][4] = 0;
+
+      return {
+        id,
+        name,
+        width: w,
+        height: h,
+        bg,
+        collision,
+        tallGrass: [],
+        warps: [
+          { x: 4, y: h - 1, target: "starter_town", targetX: id === "home_1f" ? 9 : 22, targetY: 10 }
+        ],
+        signs: [],
+        npcs: [],
+        encounters: null
+      };
+    }
+
+    const maps = {
+      starter_town: makeTownMap(),
+      home_1f: makeInterior("home_1f", "Home 1F"),
+      lab_1f: makeInterior("lab_1f", "Lab 1F")
+    };
+
+    maps.home_1f.npcs.push({
+      id: "mom",
+      x: 6 * TILE,
+      y: 4 * TILE,
+      dir: "left",
+      text: [
+        "TAKE CARE OUT THERE.",
+        "USE I J K L TO MOVE.",
+        "TEXT SHOULD BE MUCH",
+        "EASIER TO READ NOW."
+      ]
+    });
+
+    maps.lab_1f.npcs.push({
+      id: "researcher",
+      x: 5 * TILE,
+      y: 5 * TILE,
+      dir: "down",
+      text: [
+        "I CAN'T COPY THE",
+        "EXACT KANTO ROSTER.",
+        "SO I BUILT 151",
+        "ORIGINAL CREATURES",
+        "WITH UNIQUE STATS."
+      ]
+    });
+
+    const state = {
+      mode: "overworld",
+      map: maps.starter_town,
+      player: {
+        x: 16 * TILE,
+        y: 20 * TILE,
+        w: PLAYER_W,
+        h: PLAYER_H,
+        facing: "down",
+        moving: false,
+        stepProgress: 0,
+        startX: 16 * TILE,
+        startY: 20 * TILE,
+        targetX: 16 * TILE,
+        targetY: 20 * TILE,
+        speed: 0.5,
+        steps: 0,
+        animClock: 0
+      },
+      camera: { x: 0, y: 0 },
+      dialogue: null,
+      paused: false,
+      flashTimer: 0,
+      encounterPreview: null,
+      rosterOpen: false,
+      rosterIndex: 0,
+      party: [CREATURES[0], CREATURES[3], CREATURES[6]]
+    };
+
+    function getTileAtPixel(map, px, py) {
+      const tx = Math.floor(px / TILE);
+      const ty = Math.floor(py / TILE);
+      if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return Tile.TREE;
+      return map.bg[ty][tx];
+    }
+
+    function isBlocked(map, px, py) {
+      const tx = Math.floor(px / TILE);
+      const ty = Math.floor(py / TILE);
+      if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return true;
+      if (map.collision[ty][tx]) return true;
+      const testRect = { x: px, y: py, w: PLAYER_W, h: PLAYER_H };
+      for (const npc of map.npcs) {
+        if (rectsOverlap(testRect, { x: npc.x, y: npc.y, w: 8, h: 8 })) return true;
+      }
+      return false;
+    }
+
+    function tryStartMove(dx, dy, facing) {
+      const p = state.player;
+      if (p.moving || state.dialogue || state.paused || state.rosterOpen) return;
+      p.facing = facing;
+      const nx = p.x + dx * TILE;
+      const ny = p.y + dy * TILE;
+      if (isBlocked(state.map, nx, ny)) return;
+      p.moving = true;
+      p.stepProgress = 0;
+      p.startX = p.x;
+      p.startY = p.y;
+      p.targetX = nx;
+      p.targetY = ny;
+    }
+
+    function updateMovement() {
+      const p = state.player;
+      if (!p.moving) {
+        if (keys.i || keys.I) tryStartMove(0, -1, "up");
+        else if (keys.k || keys.K) tryStartMove(0, 1, "down");
+        else if (keys.j || keys.J) tryStartMove(-1, 0, "left");
+        else if (keys.l || keys.L) tryStartMove(1, 0, "right");
+        return;
+      }
+
+      p.stepProgress += p.speed;
+      const t = Math.min(1, p.stepProgress / TILE);
+      p.x = Math.round(p.startX + (p.targetX - p.startX) * t);
+      p.y = Math.round(p.startY + (p.targetY - p.startY) * t);
+      p.animClock++;
+
+      if (p.stepProgress >= TILE) {
+        p.x = p.targetX;
+        p.y = p.targetY;
+        p.moving = false;
+        p.steps++;
+        checkWarp();
+        checkTallGrassEncounter();
+      }
+    }
+
+    function facingTile() {
+      const p = state.player;
+      let tx = Math.floor(p.x / TILE);
+      let ty = Math.floor(p.y / TILE);
+      if (p.facing === "up") ty -= 1;
+      if (p.facing === "down") ty += 1;
+      if (p.facing === "left") tx -= 1;
+      if (p.facing === "right") tx += 1;
+      return { x: tx, y: ty };
+    }
+
+    function openDialogue(lines) {
+      state.dialogue = { lines, index: 0 };
+    }
+
+    function interact() {
+      if (state.paused || state.rosterOpen) return;
+      if (state.dialogue) {
+        if (state.dialogue.index < state.dialogue.lines.length - 1) state.dialogue.index++;
+        else state.dialogue = null;
+        return;
+      }
+
+      const tile = facingTile();
+      for (const sign of state.map.signs) {
+        if (sign.x === tile.x && sign.y === tile.y) {
+          openDialogue(sign.text);
+          return;
+        }
+      }
+      for (const npc of state.map.npcs) {
+        if (Math.floor(npc.x / TILE) === tile.x && Math.floor(npc.y / TILE) === tile.y) {
+          openDialogue(npc.text);
+          return;
+        }
+      }
+    }
+
+    function cancel() {
+      if (state.dialogue) {
+        state.dialogue = null;
+        return;
+      }
+      if (state.rosterOpen) {
+        state.rosterOpen = false;
+        return;
+      }
+      state.encounterPreview = null;
+    }
+
+    function toggleRoster() {
+      if (state.dialogue) return;
+      state.rosterOpen = !state.rosterOpen;
+    }
+
+    function checkWarp() {
+      const tx = Math.floor(state.player.x / TILE);
+      const ty = Math.floor(state.player.y / TILE);
+      for (const warp of state.map.warps) {
+        if (warp.x === tx && warp.y === ty) {
+          const nextMap = maps[warp.target];
+          if (!nextMap) return;
+          state.map = nextMap;
+          state.player.x = warp.targetX * TILE;
+          state.player.y = warp.targetY * TILE;
+          state.player.targetX = state.player.x;
+          state.player.targetY = state.player.y;
+          state.player.startX = state.player.x;
+          state.player.startY = state.player.y;
+          state.player.moving = false;
+          state.flashTimer = 6;
+          return;
+        }
+      }
+    }
+
+    function weightedEncounter(encounters) {
+      const total = encounters.reduce((sum, e) => sum + e.rate, 0);
+      let roll = Math.random() * total;
+      for (const e of encounters) {
+        roll -= e.rate;
+        if (roll <= 0) return e;
+      }
+      return encounters[encounters.length - 1];
+    }
+
+    function checkTallGrassEncounter() {
+      if (!state.map.encounters) return;
+      const tile = getTileAtPixel(state.map, state.player.x, state.player.y);
+      if (tile !== Tile.TALL_GRASS) return;
+      if (Math.random() < 0.12) {
+        const entry = weightedEncounter(state.map.encounters);
+        const creature = CREATURE_BY_ID[entry.id];
+        const level = entry.minLevel + Math.floor(Math.random() * (entry.maxLevel - entry.minLevel + 1));
+        state.encounterPreview = `${creature.name} LV${level}`;
+        openDialogue([
+          "A WILD CREATURE",
+          `APPEARED: ${creature.name.toUpperCase()}`,
+          `${creature.type.toUpperCase()} TYPE LV ${level}`,
+          "BATTLE SYSTEM COMING NEXT."
+        ]);
+      }
+    }
+
+    function updateCamera() {
+      const targetX = state.player.x - Math.floor(SCREEN_W / 2) + 4;
+      const targetY = state.player.y - Math.floor(SCREEN_H / 2) + 4;
+      const maxX = state.map.width * TILE - SCREEN_W;
+      const maxY = state.map.height * TILE - SCREEN_H;
+      state.camera.x = Math.max(0, Math.min(maxX, targetX));
+      state.camera.y = Math.max(0, Math.min(maxY, targetY));
+    }
+
+    function drawMap(map, camera) {
+      const startX = Math.floor(camera.x / TILE);
+      const startY = Math.floor(camera.y / TILE);
+      const endX = Math.ceil((camera.x + SCREEN_W) / TILE);
+      const endY = Math.ceil((camera.y + SCREEN_H) / TILE);
+      for (let y = startY; y <= endY; y++) {
+        for (let x = startX; x <= endX; x++) {
+          if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+          drawTile(map.bg[y][x], x * TILE - camera.x, y * TILE - camera.y);
+        }
+      }
+    }
+
+    function drawDialogue() {
+      if (!state.dialogue) return;
+      const x = 2;
+      const y = 92;
+      const w = 156;
+      const h = 50;
+      ctx.fillStyle = COLORS.ui;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = COLORS.border;
+      ctx.fillRect(x, y, w, 3);
+      ctx.fillRect(x, y + h - 3, w, 3);
+      ctx.fillRect(x, y, 3, h);
+      ctx.fillRect(x + w - 3, y, 3, h);
+      ctx.font = "bold 14px monospace";
+      ctx.textBaseline = "top";
+      const line = state.dialogue.lines[state.dialogue.index] || "";
+      wrapText(line, x + 8, y + 8, 17, 12);
+      drawText("Z", x + w - 18, y + h - 16);
+    }
+
+    function wrapText(text, x, y, charsPerLine, lineHeight) {
+      const words = text.split(" ");
+      let line = "";
+      let cy = y;
+      for (const word of words) {
+        const test = line ? line + " " + word : word;
+        if (test.length > charsPerLine) {
+          drawText(line, x, cy);
+          line = word;
+          cy += lineHeight;
+        } else {
+          line = test;
+        }
+      }
+      if (line) drawText(line, x, cy);
+    }
+
+    function drawTopBar() {
+      ctx.fillStyle = COLORS.ui;
+      ctx.fillRect(0, 0, SCREEN_W, 12);
+      ctx.fillStyle = COLORS.border;
+      ctx.fillRect(0, 10, SCREEN_W, 2);
+      ctx.font = "bold 11px monospace";
+      ctx.textBaseline = "top";
+      drawText(state.map.name.toUpperCase(), 2, 2);
+      drawText(`CREW:${state.party.length}`, 74, 2);
+      drawText("151", 132, 2);
+    }
+
+    function drawPauseOverlay() {
+      if (!state.paused) return;
+      ctx.fillStyle = "rgba(8,24,32,0.75)";
+      ctx.fillRect(24, 34, 112, 54);
+      ctx.fillStyle = COLORS.ui;
+      ctx.fillRect(26, 36, 108, 50);
+      ctx.font = "bold 10px monospace";
+      drawText("PAUSED", 57, 48);
+      ctx.font = "bold 8px monospace";
+      drawText("ENTER TO RESUME", 40, 63);
+    }
+
+    function drawRosterOverlay() {
+      if (!state.rosterOpen) return;
+      const mon = CREATURES[state.rosterIndex];
+      ctx.fillStyle = "rgba(8,24,32,0.86)";
+      ctx.fillRect(6, 14, 148, 124);
+      ctx.fillStyle = COLORS.ui;
+      ctx.fillRect(8, 16, 144, 120);
+      ctx.fillStyle = COLORS.border;
+      ctx.fillRect(8, 16, 144, 3);
+      ctx.fillRect(8, 133, 144, 3);
+      ctx.fillRect(8, 16, 3, 120);
+      ctx.fillRect(149, 16, 3, 120);
+
+      ctx.font = "bold 12px monospace";
+      drawText(`ROSTER ${mon.index}/151`, 16, 22);
+      drawText(mon.name.toUpperCase(), 16, 34);
+      drawText(mon.type.toUpperCase(), 16, 45);
+      drawText(`${mon.archetype.toUpperCase()} · ${mon.stage.toUpperCase()}`, 16, 56);
+      drawCreatureSprite(mon, 106, 28, 32);
+
+      ctx.font = "bold 8px monospace";
+      drawText(`HP  ${String(mon.stats.hp).padStart(3, " ")}`, 16, 72);
+      drawText(`ATK ${String(mon.stats.atk).padStart(3, " ")}`, 16, 82);
+      drawText(`DEF ${String(mon.stats.def).padStart(3, " ")}`, 16, 92);
+      drawText(`SPD ${String(mon.stats.spd).padStart(3, " ")}`, 16, 102);
+      drawText(`SPC ${String(mon.stats.spc).padStart(3, " ")}`, 16, 112);
+      drawText(`BST ${String(mon.stats.bst).padStart(3, " ")}`, 16, 122);
+      drawText(`EVO ${mon.evolvesTo ? mon.evolvesTo.slice(-3) : "---"}  J/L BROWSE`, 50, 112);
+      drawText(`FROM ${mon.evolvesFrom ? mon.evolvesFrom.slice(-3) : "---"}  C/X EXIT`, 50, 122);
+    }
+
+    function render() {
+      ctx.fillStyle = COLORS.c3;
+      ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+      drawMap(state.map, state.camera);
+      for (const npc of state.map.npcs) drawNPC(npc, state.camera);
+      const px = Math.floor(state.player.x - state.camera.x);
+      const py = Math.floor(state.player.y - state.camera.y);
+      drawPlayer(px, py, state.player.facing, state.player.animClock % 24 < 12);
+      drawTopBar();
+      drawDialogue();
+      drawRosterOverlay();
+      drawPauseOverlay();
+      if (state.flashTimer > 0) {
+        ctx.fillStyle = `rgba(224,248,208,${state.flashTimer / 10})`;
+        ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+      }
+    }
+
+    function updateRosterControls() {
+      if (!state.rosterOpen) return;
+      if (consumePress("j") || consumePress("J")) {
+        state.rosterIndex = (state.rosterIndex + CREATURES.length - 1) % CREATURES.length;
+      }
+      if (consumePress("l") || consumePress("L")) {
+        state.rosterIndex = (state.rosterIndex + 1) % CREATURES.length;
+      }
+    }
+
+    function runSelfTests() {
+      console.assert(CREATURES.length === 151, "Expected 151 creatures.");
+      console.assert(CREATURES[0].id === "mon_001", "First creature id should be mon_001.");
+      console.assert(CREATURES[150].id === "mon_151", "Last creature id should be mon_151.");
+      console.assert(CREATURE_BY_ID["mon_025"], "Lookup table should contain mon_025.");
+      console.assert(maps.starter_town.warps.length === 2, "Starter town should have two warps.");
+      console.assert(state.party.length === 3, "Starter party should have three creatures.");
+      console.assert(CREATURES[0].type === "Leaf" && CREATURES[1].evolvesFrom === "mon_001", "Slots 1-3 should be a starter line.");
+      console.assert(CREATURES[3].type === "Flame" && CREATURES[6].type === "Wave", "Slots 4-6 and 7-9 should match starter typing.");
+    }
+
+    runSelfTests();
+
+    function update() {
+      if (consumePress("Enter")) state.paused = !state.paused;
+
+      if (consumePress("c") || consumePress("C")) toggleRoster();
+      if (consumePress("x") || consumePress("X")) cancel();
+      if (consumePress("z") || consumePress("Z")) interact();
+
+      if (!state.paused) {
+        updateRosterControls();
+        updateMovement();
+        updateCamera();
+      }
+
+      if (state.flashTimer > 0) state.flashTimer--;
+    }
+
+    function gameLoop() {
+      update();
+      render();
+      for (const key in justPressed) justPressed[key] = false;
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
 </body>
 </html>
